@@ -13,10 +13,26 @@ try:
 except Exception:
     chardet = None
 
-DB_PATH = 'disablednews_sent.db'
-TEST_MODE = True  # 테스트용: DB/텔레그램 비활성화, 크롤링 결과만 출력
-DEBUG_LIST_ALL = True  # 디버그: 날짜 필터와 무관하게 모든 행의 제목/일자를 출력
-DAYS_WINDOW = 5  # 최근 N일 이내만 수집
+# --- 텔레그램 설정 (사용자 제공 정보) ---
+TELEGRAM_BOT_TOKEN = '6250305411:AAHWIpJDIUU57x_cFORKGsPwecQq_QYlWmw'
+TELEGRAM_CHAT_ID = 752516623
+
+# 텔레그램 설정 확인
+def check_telegram_config():
+    """텔레그램 설정이 올바른지 확인"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("⚠️  텔레그램 설정이 필요합니다!")
+        print("1. 텔레그램에서 @BotFather와 대화하여 봇 생성")
+        print("2. 봇 토큰과 채팅 ID를 코드에 설정")
+        print("3. 자세한 방법은 '텔레그램_설정_가이드.md' 파일 참조")
+        return False
+    print(f"✅ 텔레그램 설정 확인됨 - 봇 토큰: {TELEGRAM_BOT_TOKEN[:10]}..., 채팅 ID: {TELEGRAM_CHAT_ID}")
+    return True
+
+DB_PATH = 'autismnews.db'
+TEST_MODE = False  # 실제 모드: 텔레그램 전송 활성화
+DEBUG_LIST_ALL = False  # 디버그: 날짜 필터와 무관하게 모든 행의 제목/일자를 출력
+DAYS_WINDOW = 5  # 최근 5일 이내만 수집
 HEADER_TITLE = '한국자폐인사랑협회 기사'
 
 def init_db():
@@ -52,14 +68,51 @@ def save_sent(title, date):
         except sqlite3.IntegrityError:
             pass
 
+def send_telegram_message(message):
+    """텔레그램으로 메시지를 전송합니다."""
+    if TEST_MODE:
+        print("테스트 모드: 텔레그램 전송 건너뜀")
+        return False
+        
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("텔레그램 봇 토큰 또는 chat_id가 설정되지 않았습니다. 메시지를 전송할 수 없습니다.")
+        return False
+    
+    try:
+        # telepot 대신 requests를 사용하여 텔레그램 API 직접 호출
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        
+        # 메시지가 너무 길면 분할
+        max_length = 4096
+        messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
+        
+        for msg_part in messages:
+            if msg_part.strip():
+                data = {
+                    'chat_id': TELEGRAM_CHAT_ID,
+                    'text': msg_part,
+                    'parse_mode': 'HTML'
+                }
+                response = requests.post(url, data=data, timeout=10)
+                if response.status_code != 200:
+                    print(f"텔레그램 전송 실패: {response.status_code} - {response.text}")
+                    return False
+        
+        print("텔레그램 메시지 전송 프로세스 완료.")
+        return True
+        
+    except Exception as e:
+        print(f"오류: 텔레그램 메시지 전송 중 오류 발생: {e}")
+        return False
+
 # ==============================
-# 수집 대상 URL
+# 수집 대상 URL (카테고리별)
 # ==============================
 urls = [
-    'https://www.autismkorea.kr/bbs/board.php?tbl=bbs31',  # 공지사항
-    'https://www.autismkorea.kr/bbs/board.php?tbl=bbs36',  # 뉴스레터
-    'https://www.autismkorea.kr/bbs/board.php?tbl=bbs32',  # 언론보도
-    'https://www.autismkorea.kr/bbs/board.php?tbl=bbs34'   # 외부기관 소식
+    ('https://www.autismkorea.kr/bbs/board.php?tbl=bbs31', '공지사항'),
+    ('https://www.autismkorea.kr/bbs/board.php?tbl=bbs36', '뉴스레터'),
+    ('https://www.autismkorea.kr/bbs/board.php?tbl=bbs32', '언론보도'),
+    ('https://www.autismkorea.kr/bbs/board.php?tbl=bbs34', '외부기관 소식')
 ]
 
 headers = {
@@ -135,10 +188,16 @@ def create_session_with_ssl_fallback():
 
 session = create_session_with_ssl_fallback()
 
+# 최근 5일 이내 기사만 수집
 five_days_ago = datetime.now() - timedelta(days=DAYS_WINDOW)
 msg = ''
 count = 1
 debug_count = 1  # DEBUG_LIST_ALL 출력용 순번
+
+# 텔레그램 설정 확인
+if not check_telegram_config():
+    print("텔레그램 설정 후 다시 실행해주세요.")
+    exit(1)
 
 init_db()
 
@@ -184,10 +243,18 @@ def make_request_with_retry(url, max_retries=3):
     
     return None
 
-for url in urls:
+# 카테고리별 기사 수집
+categorized_articles = {}
+
+for url, category in urls:
+    print(f"\n=== {category} 수집 중 ===")
     res = make_request_with_retry(url)
     if res is None:
         continue
+    
+    # 카테고리별 기사 리스트 초기화
+    if category not in categorized_articles:
+        categorized_articles[category] = []
     # 응답 인코딩 판별: meta > headers > chardet > cp949 백업
     raw = res.content
     enc_candidates = []
@@ -296,13 +363,17 @@ for url in urls:
                 print(f"{debug_count}\t{title}\t{date_key}\t{full_url}")
                 debug_count += 1
 
+            # 최근 5일 이내 기사만 수집
             if date_obj >= five_days_ago:
                 if not is_already_sent(title, date_key):
-                    line = f"{count}\t{title}\t{date_key}\t{full_url}"
-                    print(line)
-                    msg += line + "\n"
+                    article_info = {
+                        'title': title,
+                        'date': date_key,
+                        'url': full_url
+                    }
+                    categorized_articles[category].append(article_info)
+                    print(f"{len(categorized_articles[category])}. {title} ({date_key})")
                     save_sent(title, date_key)
-                    count += 1
         # 카드형을 처리했으므로 테이블 파싱은 건너뜀
         continue
     rows = table.find_all('tr')
@@ -357,26 +428,68 @@ for url in urls:
             print(f"{debug_count}\t{title}\t{date_key}\t{full_url}")
             debug_count += 1
 
-        # 최근 5일 이내만 수집
+        # 최근 5일 이내 기사만 수집
         if date_obj >= five_days_ago:
             if not is_already_sent(title, date_key):
-                line = f"{count}\t{title}\t{date_key}\t{full_url}"
-                print(line)
-                msg += line + "\n"
+                article_info = {
+                    'title': title,
+                    'date': date_key,
+                    'url': full_url
+                }
+                categorized_articles[category].append(article_info)
+                print(f"{len(categorized_articles[category])}. {title} ({date_key})")
                 save_sent(title, date_key)
-                count += 1
 
 # ==============================
-# 테스트 모드: 콘솔 출력만
+# 카테고리별 텔레그램 전송
 # ==============================
-if TEST_MODE:
-    print(HEADER_TITLE)
-    if msg:
-        print("수집 결과:\n" + msg)
-    else:
-        print("최근 5일 이내 신규 공지사항 없음")
+total_articles = sum(len(articles) for articles in categorized_articles.values())
+
+if total_articles > 0:
+    print(f"\n=== 총 {total_articles}개 기사 수집 완료 ===")
+    
+    for category, articles in categorized_articles.items():
+        if not articles:
+            continue
+            
+        print(f"\n--- {category} ({len(articles)}개) ---")
+        
+        # 카테고리별 메시지 생성
+        category_message = f"<b>📢 {category}</b>\n\n"
+        
+        for i, article in enumerate(articles, 1):
+            # HTML 특수문자 이스케이프
+            title = article['title'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            article_text = f"<b>{i}.</b> {title}\n📅 {article['date']}\n🔗 <a href='{article['url']}'>링크</a>\n\n"
+            
+            # 메시지 길이 확인 (4000자 제한)
+            if len(category_message + article_text) > 4000:
+                # 현재 메시지 전송
+                print(f"전송할 메시지 ({category}):\n{category_message}")
+                if not TEST_MODE:
+                    send_telegram_message(category_message)
+                else:
+                    print("테스트 모드: 텔레그램 전송 건너뜀")
+                
+                # 새 메시지 시작
+                category_message = f"<b>📢 {category} (계속)</b>\n\n" + article_text
+            else:
+                category_message += article_text
+        
+        # 마지막 메시지 전송
+        if category_message.strip():
+            print(f"전송할 메시지 ({category}):\n{category_message}")
+            if not TEST_MODE:
+                send_telegram_message(category_message)
+            else:
+                print("테스트 모드: 텔레그램 전송 건너뜀")
+                
 else:
-    # 실제 모드에서만 텔레그램 전송 (여기선 비활성화)
-    if msg:
-        msg = HEADER_TITLE + "\n" + msg
-    pass
+    # 수집된 기사가 없는 경우
+    no_news_message = f"<b>{HEADER_TITLE}</b>\n\n신규 공지사항 없음"
+    print(no_news_message)
+    
+    if not TEST_MODE:
+        send_telegram_message(no_news_message)
+    else:
+        print("테스트 모드: 텔레그램 전송 건너뜀")
