@@ -1,0 +1,65 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  GitHub Actions 무료 클라우드 자동화 - 빠른 시작
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ 준비 완료된 파일들:
+  📄 한국자폐인사랑협회_크롤링.py (환경변수 지원)
+  📄 .github/workflows/daily-crawler.yml (자동화 설정)
+  📄 requirements.txt (필요한 패키지 목록)
+  📄 .gitignore (민감 정보 보호)
+  📖 GitHub_시작하기.md (상세 가이드)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  5분 설정 가이드
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1단계: GitHub에 저장소 생성 (Private 권장)
+   → https://github.com/new
+
+2단계: 로컬 코드 업로드
+   git init
+   git add .
+   git commit -m "Initial commit"
+   git remote add origin https://github.com/YOUR_USERNAME/autism.git
+   git push -u origin main
+
+3단계: GitHub Secrets 설정
+   Settings → Secrets and variables → Actions
+   
+   Secret 1:
+   - Name: TELEGRAM_BOT_TOKEN
+   - Value: 6250305411:AAHWIpJDIUU57x_cFORKGsPwecQq_QYlWmw
+   
+   Secret 2:
+   - Name: TELEGRAM_CHAT_ID
+   - Value: 752516623
+
+4단계: 테스트 실행
+   Actions 탭 → Daily News Crawler → Run workflow
+
+5단계: 완료!
+   매일 오전 9시 자동 실행됩니다! 🎉
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  장점
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ 완전 무료 (월 2,000분 제공)
+✅ 컴퓨터 꺼도 됨 (GitHub 서버에서 실행)
+✅ DH_KEY 문제 없음 (Ubuntu OpenSSL)
+✅ 언제든 수동 실행 가능
+✅ 실행 로그 확인 가능
+✅ 안정적 (GitHub 인프라)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  자세한 설명
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📖 GitHub_시작하기.md - 초보자용 단계별 가이드
+📖 GitHub_Actions_설정가이드.md - 상세 설명 및 고급 기능
+📖 DH_KEY_해결방법.md - SSL 문제 해결 가이드
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+질문이 있으시면 언제든 물어보세요! 😊
+
