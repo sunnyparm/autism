@@ -72,17 +72,68 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 class TLSAdapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
         ctx = ssl.create_default_context()
-        # 일부 서버의 약한 DH 파라미터 문제(DH_KEY_TOO_SMALL) 우회를 위해 보안 레벨을 낮춘다
-        try:
-            ctx.set_ciphers('DEFAULT@SECLEVEL=1')
-        except ssl.SSLError:
-            pass
+        # SSL 검증 완전 비활성화
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
+        
+        # 다양한 SSL 설정 시도
+        try:
+            # 보안 레벨을 최소로 설정
+            ctx.set_ciphers('DEFAULT@SECLEVEL=0')
+        except ssl.SSLError:
+            try:
+                # 대체 방법: 모든 암호화 방식 허용
+                ctx.set_ciphers('ALL:!aNULL:!eNULL')
+            except ssl.SSLError:
+                pass
+        
+        # 프로토콜 버전 설정
+        try:
+            ctx.minimum_version = ssl.TLSVersion.TLSv1
+            ctx.maximum_version = ssl.TLSVersion.TLSv1_3
+        except AttributeError:
+            # 구버전 Python 호환성
+            try:
+                ctx.protocol = ssl.PROTOCOL_TLS
+            except:
+                pass
+        
         self.poolmanager = PoolManager(*args, ssl_context=ctx, **kwargs)
 
-session = requests.Session()
-session.mount('https://', TLSAdapter())
+# 여러 SSL 설정 방법 시도
+def create_session_with_ssl_fallback():
+    """SSL 문제 해결을 위한 여러 방법을 시도하는 세션 생성"""
+    
+    # 방법 1: 개선된 TLSAdapter 사용
+    try:
+        session = requests.Session()
+        session.mount('https://', TLSAdapter())
+        return session
+    except Exception as e:
+        print(f"TLSAdapter 실패: {e}")
+    
+    # 방법 2: 기본 세션에 SSL 비활성화
+    try:
+        session = requests.Session()
+        session.verify = False
+        return session
+    except Exception as e:
+        print(f"기본 세션 실패: {e}")
+    
+    # 방법 3: urllib3 직접 사용
+    try:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        session = requests.Session()
+        session.verify = False
+        return session
+    except Exception as e:
+        print(f"urllib3 세션 실패: {e}")
+    
+    # 최후의 수단: 기본 requests
+    return requests.Session()
+
+session = create_session_with_ssl_fallback()
 
 five_days_ago = datetime.now() - timedelta(days=DAYS_WINDOW)
 msg = ''
@@ -91,13 +142,51 @@ debug_count = 1  # DEBUG_LIST_ALL 출력용 순번
 
 init_db()
 
+def make_request_with_retry(url, max_retries=3):
+    """SSL 오류를 포함한 재시도 로직이 있는 요청 함수"""
+    for attempt in range(max_retries):
+        print(f"요청 시작 (시도 {attempt + 1}/{max_retries}): {url}")
+        
+        try:
+            # 다양한 SSL 설정으로 시도
+            if attempt == 0:
+                # 첫 번째 시도: 기본 설정
+                res = session.get(url, headers=headers, timeout=15, verify=False)
+            elif attempt == 1:
+                # 두 번째 시도: 다른 SSL 설정
+                import ssl
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                res = session.get(url, headers=headers, timeout=15, verify=False)
+            else:
+                # 세 번째 시도: requests 직접 사용
+                res = requests.get(url, headers=headers, timeout=15, verify=False)
+            
+            print(f"상태 코드: {res.status_code}, 응답 길이: {len(res.content)}")
+            return res
+            
+        except ssl.SSLError as e:
+            print(f"SSL 오류 (시도 {attempt + 1}): {e}")
+            if attempt < max_retries - 1:
+                print("다른 SSL 설정으로 재시도...")
+                continue
+            else:
+                print("모든 SSL 설정 시도 실패")
+                return None
+        except Exception as e:
+            print(f"요청 실패 (시도 {attempt + 1}): {e}")
+            if attempt < max_retries - 1:
+                print("재시도...")
+                continue
+            else:
+                print("모든 시도 실패")
+                return None
+    
+    return None
+
 for url in urls:
-    print(f"요청 시작: {url}")
-    try:
-        res = session.get(url, headers=headers, timeout=15, verify=False)
-        print(f"상태 코드: {res.status_code}, 응답 길이: {len(res.content)}")
-    except Exception as e:
-        print(f"요청 실패: {e}")
+    res = make_request_with_retry(url)
+    if res is None:
         continue
     # 응답 인코딩 판별: meta > headers > chardet > cp949 백업
     raw = res.content
