@@ -1,0 +1,17 @@
+# OpenSSL 설정 파일 - DH_KEY_TOO_SMALL 오류 해결
+# 이 파일을 사용하여 OpenSSL 보안 레벨을 낮춥니다
+
+openssl_conf = openssl_init
+
+[openssl_init]
+ssl_conf = ssl_sect
+
+[ssl_sect]
+system_default = system_default_sect
+
+[system_default_sect]
+MinProtocol = TLSv1
+MaxProtocol = TLSv1.3
+CipherString = DEFAULT@SECLEVEL=0
+Options = UnsafeLegacyRenegotiation
+

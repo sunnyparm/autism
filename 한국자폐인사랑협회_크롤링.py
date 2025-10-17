@@ -1,3 +1,21 @@
+# SSL 오류 해결을 위한 환경 변수 설정
+import os
+import sys
+
+# OpenSSL 설정 파일 경로 지정
+script_dir = os.path.dirname(os.path.abspath(__file__))
+openssl_conf_path = os.path.join(script_dir, 'openssl.cnf')
+
+# OpenSSL 설정 적용
+if os.path.exists(openssl_conf_path):
+    os.environ['OPENSSL_CONF'] = openssl_conf_path
+else:
+    os.environ['OPENSSL_CONF'] = '/dev/null'
+
+os.environ['PYTHONHTTPSVERIFY'] = '0'
+os.environ['CURL_CA_BUNDLE'] = ''
+os.environ['REQUESTS_CA_BUNDLE'] = ''
+
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
@@ -13,9 +31,10 @@ try:
 except Exception:
     chardet = None
 
-# --- 텔레그램 설정 (사용자 제공 정보) ---
-TELEGRAM_BOT_TOKEN = '6250305411:AAHWIpJDIUU57x_cFORKGsPwecQq_QYlWmw'
-TELEGRAM_CHAT_ID = 752516623
+# --- 텔레그램 설정 ---
+# GitHub Actions에서는 환경변수로, 로컬에서는 기본값 사용
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '6250305411:AAHWIpJDIUU57x_cFORKGsPwecQq_QYlWmw')
+TELEGRAM_CHAT_ID = int(os.environ.get('TELEGRAM_CHAT_ID', '752516623'))
 
 # 텔레그램 설정 확인
 def check_telegram_config():
@@ -31,8 +50,8 @@ def check_telegram_config():
 
 DB_PATH = 'autismnews.db'
 TEST_MODE = False  # 실제 모드: 텔레그램 전송 활성화
-DEBUG_LIST_ALL = False  # 디버그: 날짜 필터와 무관하게 모든 행의 제목/일자를 출력
-DAYS_WINDOW = 5  # 최근 5일 이내만 수집
+DEBUG_LIST_ALL = True  # 디버그: 날짜 필터와 무관하게 모든 행의 제목/일자를 출력
+DAYS_WINDOW = 999999  # 모든 기사 수집 (날짜 제한 없음)
 HEADER_TITLE = '한국자폐인사랑협회 기사'
 
 def init_db():
@@ -50,23 +69,12 @@ def init_db():
         conn.commit()
 
 def is_already_sent(title, date):
-    if TEST_MODE:
-        return False
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT 1 FROM sent_news WHERE title = ? AND date = ?", (title, date))
-        return cur.fetchone() is not None
+    # 테스트용: DB 기능 일시정지 - 항상 False 반환하여 모든 기사 전송
+    return False
 
 def save_sent(title, date):
-    if TEST_MODE:
-        return
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.cursor()
-        try:
-            cur.execute("INSERT INTO sent_news (title, date) VALUES (?, ?)", (title, date))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            pass
+    # 테스트용: DB 기능 일시정지 - 저장하지 않음
+    pass
 
 def send_telegram_message(message):
     """텔레그램으로 메시지를 전송합니다."""
@@ -115,9 +123,41 @@ urls = [
     ('https://www.autismkorea.kr/bbs/board.php?tbl=bbs34', '외부기관 소식')
 ]
 
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-}
+# 다양한 User-Agent 풀
+user_agents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+]
+
+def get_random_headers():
+    """랜덤한 헤더 조합 생성"""
+    import random
+    user_agent = random.choice(user_agents)
+    
+    base_headers = {
+        'User-Agent': user_agent,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'max-age=0'
+    }
+    
+    # 랜덤하게 추가 헤더 선택
+    if random.choice([True, False]):
+        base_headers['DNT'] = '1'
+    if random.choice([True, False]):
+        base_headers['Sec-Fetch-Dest'] = 'document'
+        base_headers['Sec-Fetch-Mode'] = 'navigate'
+        base_headers['Sec-Fetch-Site'] = 'none'
+    if random.choice([True, False]):
+        base_headers['Referer'] = 'https://www.autismkorea.kr/'
+    
+    return base_headers
 
 # SSL 검증 경고 비활성화 (verify=False 사용 시)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -129,27 +169,43 @@ class TLSAdapter(HTTPAdapter):
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         
-        # 다양한 SSL 설정 시도
+        # PythonAnywhere DH_KEY_TOO_SMALL 오류 해결
         try:
-            # 보안 레벨을 최소로 설정
-            ctx.set_ciphers('DEFAULT@SECLEVEL=0')
-        except ssl.SSLError:
+            # 보안 레벨을 최소로 설정 + DH 키 허용
+            ctx.set_ciphers('DEFAULT:@SECLEVEL=0')
+            # 레거시 서버 연결 옵션 활성화
+            ctx.options |= 0x4  # OP_LEGACY_SERVER_CONNECT
+        except (ssl.SSLError, AttributeError):
             try:
                 # 대체 방법: 모든 암호화 방식 허용
-                ctx.set_ciphers('ALL:!aNULL:!eNULL')
+                ctx.set_ciphers('ALL:@SECLEVEL=0')
             except ssl.SSLError:
-                pass
+                try:
+                    ctx.set_ciphers('ALL')
+                except:
+                    pass
         
-        # 프로토콜 버전 설정
+        # 프로토콜 버전 설정 (가장 넓은 범위)
         try:
             ctx.minimum_version = ssl.TLSVersion.TLSv1
             ctx.maximum_version = ssl.TLSVersion.TLSv1_3
+            # TLS 1.0, 1.1 명시적 활성화
+            ctx.options &= ~ssl.OP_NO_TLSv1
+            ctx.options &= ~ssl.OP_NO_TLSv1_1
         except AttributeError:
             # 구버전 Python 호환성
             try:
                 ctx.protocol = ssl.PROTOCOL_TLS
+                ctx.options &= ~ssl.OP_NO_TLSv1
+                ctx.options &= ~ssl.OP_NO_TLSv1_1
             except:
                 pass
+        
+        # 추가 SSL 옵션
+        try:
+            ctx.options |= ssl.OP_NO_COMPRESSION
+        except:
+            pass
         
         self.poolmanager = PoolManager(*args, ssl_context=ctx, **kwargs)
 
@@ -188,8 +244,8 @@ def create_session_with_ssl_fallback():
 
 session = create_session_with_ssl_fallback()
 
-# 최근 5일 이내 기사만 수집
-five_days_ago = datetime.now() - timedelta(days=DAYS_WINDOW)
+# 테스트용: 날짜 제한 없이 모든 기사 수집
+five_days_ago = datetime(1900, 1, 1)  # 매우 오래된 날짜로 설정하여 모든 기사 포함
 msg = ''
 count = 1
 debug_count = 1  # DEBUG_LIST_ALL 출력용 순번
@@ -201,33 +257,121 @@ if not check_telegram_config():
 
 init_db()
 
-def make_request_with_retry(url, max_retries=3):
-    """SSL 오류를 포함한 재시도 로직이 있는 요청 함수"""
+def make_request_with_retry(url, max_retries=7):
+    """403 오류 및 SSL 오류를 포함한 극강화된 재시도 로직"""
+    import time
+    import random
+    
+    # 새로운 세션 생성 함수 (SSL 우회)
+    def create_custom_session():
+        """SSL 오류 우회를 위한 커스텀 세션 생성"""
+        import urllib3
+        from urllib3.util.ssl_ import create_urllib3_context
+        
+        class CustomHTTPAdapter(HTTPAdapter):
+            def init_poolmanager(self, *args, **kwargs):
+                context = create_urllib3_context()
+                context.load_default_certs()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                
+                # DH_KEY_TOO_SMALL 오류 해결
+                try:
+                    context.set_ciphers('DEFAULT:@SECLEVEL=0')
+                    context.options |= 0x4  # OP_LEGACY_SERVER_CONNECT
+                except:
+                    try:
+                        context.set_ciphers('ALL:@SECLEVEL=0')
+                    except:
+                        pass
+                
+                kwargs['ssl_context'] = context
+                return super().init_poolmanager(*args, **kwargs)
+        
+        s = requests.Session()
+        s.mount('https://', CustomHTTPAdapter())
+        return s
+    
     for attempt in range(max_retries):
         print(f"요청 시작 (시도 {attempt + 1}/{max_retries}): {url}")
         
         try:
-            # 다양한 SSL 설정으로 시도
+            # 매번 랜덤한 헤더 사용
+            current_headers = get_random_headers()
+            
+            # 시도별 다른 전략
             if attempt == 0:
-                # 첫 번째 시도: 기본 설정
-                res = session.get(url, headers=headers, timeout=15, verify=False)
+                # 첫 번째 시도: 기본 세션 + 랜덤 헤더
+                res = session.get(url, headers=current_headers, timeout=25, verify=False)
             elif attempt == 1:
-                # 두 번째 시도: 다른 SSL 설정
-                import ssl
-                import urllib3
-                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                res = session.get(url, headers=headers, timeout=15, verify=False)
+                # 두 번째 시도: 커스텀 세션 (DH 키 해결)
+                custom_session = create_custom_session()
+                res = custom_session.get(url, headers=current_headers, timeout=25, verify=False)
+                custom_session.close()
+            elif attempt == 2:
+                # 세 번째 시도: 최소 헤더 + 커스텀 세션
+                minimal_headers = {'User-Agent': random.choice(user_agents)}
+                custom_session = create_custom_session()
+                res = custom_session.get(url, headers=minimal_headers, timeout=25, verify=False)
+                custom_session.close()
+            elif attempt == 3:
+                # 네 번째 시도: 모바일 User-Agent
+                mobile_headers = {
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                }
+                custom_session = create_custom_session()
+                res = custom_session.get(url, headers=mobile_headers, timeout=25, verify=False)
+                custom_session.close()
+            elif attempt == 4:
+                # 다섯 번째 시도: 구형 브라우저
+                old_headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+                }
+                res = requests.get(url, headers=old_headers, timeout=25, verify=False)
+            elif attempt == 5:
+                # 여섯 번째 시도: curl 시뮬레이션
+                curl_headers = {
+                    'User-Agent': 'curl/7.68.0',
+                    'Accept': '*/*'
+                }
+                res = requests.get(url, headers=curl_headers, timeout=25, verify=False)
             else:
-                # 세 번째 시도: requests 직접 사용
-                res = requests.get(url, headers=headers, timeout=15, verify=False)
+                # 일곱 번째 시도: 완전히 다른 접근
+                res = requests.get(url, timeout=25, verify=False, allow_redirects=True)
             
             print(f"상태 코드: {res.status_code}, 응답 길이: {len(res.content)}")
-            return res
+            
+            # 403 오류 처리
+            if res.status_code == 403:
+                print(f"403 Forbidden 오류 (시도 {attempt + 1})")
+                if attempt < max_retries - 1:
+                    wait_time = random.uniform(3, 8) + attempt * 3  # 더 긴 대기 시간
+                    print(f"{wait_time:.1f}초 대기 후 재시도...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print("모든 403 오류 재시도 실패")
+                    return None
+            
+            # 200 성공 시
+            if res.status_code == 200:
+                return res
+            
+            # 기타 상태 코드 처리
+            if attempt < max_retries - 1:
+                wait_time = random.uniform(2, 5)
+                print(f"상태 코드 {res.status_code}로 인한 {wait_time:.1f}초 대기 후 재시도...")
+                time.sleep(wait_time)
+                continue
             
         except ssl.SSLError as e:
             print(f"SSL 오류 (시도 {attempt + 1}): {e}")
             if attempt < max_retries - 1:
-                print("다른 SSL 설정으로 재시도...")
+                wait_time = random.uniform(2, 5)
+                print(f"SSL 오류로 인한 {wait_time:.1f}초 대기 후 재시도...")
+                time.sleep(wait_time)
                 continue
             else:
                 print("모든 SSL 설정 시도 실패")
@@ -235,7 +379,9 @@ def make_request_with_retry(url, max_retries=3):
         except Exception as e:
             print(f"요청 실패 (시도 {attempt + 1}): {e}")
             if attempt < max_retries - 1:
-                print("재시도...")
+                wait_time = random.uniform(2, 6) + attempt
+                print(f"오류로 인한 {wait_time:.1f}초 대기 후 재시도...")
+                time.sleep(wait_time)
                 continue
             else:
                 print("모든 시도 실패")

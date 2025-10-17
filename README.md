@@ -76,21 +76,41 @@ SQLite 데이터베이스를 사용하여 이미 전송된 뉴스를 추적합�
 
 ## 자동화 설정
 
-정기적으로 실행하려면:
-
-### Windows 작업 스케줄러
+### ✅ Windows 작업 스케줄러 (권장)
 1. 작업 스케줄러 열기
 2. 기본 작업 만들기
 3. 트리거: 매일 원하는 시간
 4. 동작: 프로그램 시작
-5. 프로그램: `python`
+5. 프로그램: `C:\Python\python.exe`
 6. 인수: `한국자폐인사랑협회_크롤링.py`
+7. 시작 위치: `C:\Users\KR\Desktop\git_repo\autism`
 
 ### Linux/Mac Cron
 ```bash
 # 매일 오전 9시에 실행
-0 9 * * * /usr/bin/python3 /path/to/한국자폐인사랑협회_크롤링.py
+0 9 * * * cd /path/to/autism && /usr/bin/python3 한국자폐인사랑협회_크롤링.py
 ```
+
+### ⚠️ PythonAnywhere에서 실행 시 주의사항
+
+**PythonAnywhere 무료 계정의 제한:**
+- 화이트리스트된 사이트만 접근 가능
+- `autismkorea.kr`은 화이트리스트에 **없습니다**
+- 무료 계정으로는 크롤링이 **불가능**합니다
+
+**해결 방법:**
+1. **PythonAnywhere 유료 계정** ($5/월) - 모든 사이트 접근 가능
+2. **로컬 컴퓨터에서 실행** (Windows 작업 스케줄러 사용) ← 권장
+3. **GitHub Actions** (무료 대안)
+4. **AWS Lambda, Google Cloud Functions** 등
+
+**테스트 방법:**
+```bash
+# PythonAnywhere에서 연결 테스트
+python3 test_connection.py
+```
+
+자세한 내용은 `가상환경_문제_해결.md` 파일을 참고하세요.
 
 ## 문제 해결
 
